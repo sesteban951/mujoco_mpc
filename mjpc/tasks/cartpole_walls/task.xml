@@ -1,0 +1,106 @@
+<mujoco model="Cartpole Walls">
+  <include file="../common.xml"/>
+
+  <!-- bumped from 4K (cartpole default) since contacts are now active -->
+  <size memory="1M"/>
+
+  <!-- contacts enabled by default; walls collide with cart and pole -->
+  <option timestep="0.001"/>
+
+  <default>
+    <default class="pole">
+      <joint type="hinge" axis="0 1 0" damping="2e-6"/>
+      <geom type="capsule" fromto="0 0 0 0 0 1" size="0.045" material="self" mass=".1"/>
+    </default>
+  </default>
+
+  <custom>
+    <!-- agent -->
+    <numeric name="agent_planner" data="1" />
+    <numeric name="agent_horizon" data="1.0" />
+    <numeric name="agent_timestep" data="0.01" />
+    <numeric name="sampling_sample_width" data="0.01" />
+    <numeric name="sampling_control_width" data="0.015" />
+    <numeric name="sampling_spline_points" data="10" />
+    <numeric name="sampling_exploration" data="0.5" />
+    <numeric name="gradient_spline_points" data="10" />
+    <numeric name="residual_Goal" data="0.0 -1.5 1.5" />
+
+    <!-- estimator -->
+    <numeric name="estimator" data="0" />
+    <numeric name="estimator_sensor_start" data="4" />
+    <numeric name="estimator_number_sensor" data="2" />
+    <numeric name="estimator_timestep" data="0.005" />
+    <numeric name="batch_configuration_length" data="3" />
+    <numeric name="batch_scale_prior" data="1.0e-3" />
+  </custom>
+
+  <worldbody>
+    <light name="light" pos="0 0 6"/>
+    <camera name="fixed" pos="0 -4 1" zaxis="0 -1 0"/>
+    <camera name="lookatcart" mode="targetbody" target="cart" pos="0 -2 2"/>
+
+    <!-- non-colliding scenery -->
+    <geom name="floor" pos="0 0 -.05" size="4 4 .2" type="plane" material="blue_grid"
+          contype="0" conaffinity="0"/>
+    <geom name="rail1" type="capsule" pos="0  .07 1" zaxis="1 0 0" size="0.02 2"
+          material="decoration" contype="0" conaffinity="0"/>
+    <geom name="rail2" type="capsule" pos="0 -.07 1" zaxis="1 0 0" size="0.02 2"
+          material="decoration" contype="0" conaffinity="0"/>
+
+    <!-- Walls: proportionally scaled (~1.67x) from mj-ilqr/models/cartpole/cartpole_walls.xml
+         to match MJPC's longer pole (1.0 vs 0.6). -->
+    <body name="left_wall" pos="-1.0 0 1.83">
+      <geom name="left_wall" type="box" size="0.17 0.5 0.5"
+            rgba="0.8 0.3 0.3 0.7" contype="1" conaffinity="1"/>
+    </body>
+    <body name="right_wall" pos="1.0 0 1.83">
+      <geom name="right_wall" type="box" size="0.17 0.5 0.5"
+            rgba="0.3 0.3 0.8 0.7" contype="1" conaffinity="1"/>
+    </body>
+
+    <!-- cart + pole (matches mjpc/tasks/cartpole/cartpole_modified.xml).
+         Cart is non-colliding: pole capsule base sits inside the cart box, so
+         with contacts on this would generate persistent penetration and starve
+         the solver. Cart is already above wall-collision range, so no contacts
+         are needed for it. -->
+    <body name="cart" pos="0 0 1">
+      <joint name="slider" type="slide" limited="true" axis="1 0 0"
+             range="-1.8 1.8" solreflimit=".08 1" damping="1.0e-4"/>
+      <geom name="cart" type="box" size="0.2 0.15 0.1" material="self" mass="1"
+            contype="0" conaffinity="0"/>
+      <body name="pole_1" childclass="pole">
+        <joint name="hinge_1" damping="1.0e-4"/>
+        <geom name="pole_1" contype="1" conaffinity="1"/>
+        <site name="tip" pos="0 0 1"/>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <motor name="slide" joint="slider" gear="10" ctrllimited="true" ctrlrange="-1 1"/>
+  </actuator>
+
+  <sensor>
+    <!-- cost terms (must stay in this order; residual values are matched by index) -->
+    <user name="Vertical" dim="1" user="6 10.0 0 100.0 0.01"/>
+    <user name="Centered" dim="1" user="6 10.0 0 100.0 0.1"/>
+    <user name="Velocity" dim="1" user="0 0.1 0.0 1.0"/>
+    <user name="Control"  dim="1" user="0 0.1 0.0 1.0"/>
+
+    <!-- estimator -->
+    <jointpos name="slider_pos" joint="slider"/>
+    <jointpos name="hinge_pos"  joint="hinge_1"/>
+
+    <!-- trace -->
+    <framepos name="trace0" objtype="site" objname="tip"/>
+
+    <!-- residual -->
+    <framepos    name="position" objtype="site" objname="tip"/>
+    <framelinvel name="velocity" objtype="site" objname="tip"/>
+  </sensor>
+
+  <keyframe>
+    <key name="home" qpos="1 0"/>
+  </keyframe>
+</mujoco>

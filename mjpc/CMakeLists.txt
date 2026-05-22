@@ -48,6 +48,8 @@ add_library(
   tasks/bimanual/reorient/reorient.h
   tasks/cartpole/cartpole.cc
   tasks/cartpole/cartpole.h
+  tasks/cartpole_walls/cartpole_walls.cc
+  tasks/cartpole_walls/cartpole_walls.h
   tasks/fingers/fingers.cc
   tasks/fingers/fingers.h
   tasks/humanoid/interact/interact.cc

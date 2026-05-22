@@ -24,6 +24,7 @@
 #include "mjpc/tasks/bimanual/insert/insert.h"
 #include "mjpc/tasks/bimanual/reorient/reorient.h"
 #include "mjpc/tasks/cartpole/cartpole.h"
+#include "mjpc/tasks/cartpole_walls/cartpole_walls.h"
 #include "mjpc/tasks/fingers/fingers.h"
 #include "mjpc/tasks/humanoid/interact/interact.h"
 #include "mjpc/tasks/humanoid/stand/stand.h"
@@ -51,6 +52,7 @@ std::vector<std::shared_ptr<Task>> GetTasks() {
       std::make_shared<aloha::Insert>(),
       std::make_shared<aloha::Reorient>(),
       std::make_shared<Cartpole>(),
+      std::make_shared<CartpoleWalls>(),
       std::make_shared<Fingers>(),
       std::make_shared<humanoid::Interact>(),
       std::make_shared<humanoid::Stand>(),
