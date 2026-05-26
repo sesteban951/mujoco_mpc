@@ -52,6 +52,8 @@ add_library(
   tasks/cartpole_walls/cartpole_walls.h
   tasks/fingers/fingers.cc
   tasks/fingers/fingers.h
+  tasks/g1/stand/stand.cc
+  tasks/g1/stand/stand.h
   tasks/humanoid/interact/interact.cc
   tasks/humanoid/interact/interact.h
   tasks/humanoid/interact/contact_keyframe.cc
