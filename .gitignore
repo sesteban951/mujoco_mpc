@@ -33,3 +33,5 @@ MJDATA.TXT
 MJMODEL.TXT
 # Python
 python/dist/
+# claude
+.claude/

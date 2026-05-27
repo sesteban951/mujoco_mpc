@@ -1,5 +1,4 @@
 <mujoco model="G1 Stand">
-  <include file="../scene.xml"/>
   <size memory="400K"/>
 
   <custom>
@@ -8,9 +7,50 @@
     <numeric name="agent_timestep" data="0.015" />
     <numeric name="sampling_spline_points" data="3" />
     <numeric name="sampling_exploration" data="0.05" />
+    <numeric name="residual_Height Goal" data="0.79 0.0 1.0" />
   </custom>
 
+  <!-- Sensors are declared BEFORE the model include so the <user> residual    -->
+  <!-- sensors are first in the model (Task requires sensor[0] to be mjSENS_USER; -->
+  <!-- g1_23dof.xml brings its own IMU/foot sensors that would otherwise precede). -->
   <sensor>
-    <!-- TODO: add <user> residual sensors and tracking sensors here. -->
+    <!-- ===== Residual cost terms (order + dims must match Residual()) ===== -->
+    <!--  norm/weight format: "<NormType> <weight> <w_lower> <w_upper> [params]" -->
+    <user name="Height"     dim="1"  user="6 100.0 0.0 100.0 0.1" />
+    <user name="Balance"    dim="1"  user="6 50.0  0.0 100.0 0.1" />
+    <user name="CoM Vel."   dim="2"  user="0 10.0  0.0 100.0" />
+    <user name="Ctrl"       dim="23" user="0 0.25  0.0 1.0" />
+    <user name="Upright"    dim="1"  user="2 5.0   0.0 25.0 0.01" />
+    <user name="Joint Vel." dim="23" user="0 1.0e-5 0.0 1.0e-3" />
+
+    <!-- ===== Inputs read by Residual() via SensorByName() ===== -->
+    <framepos    name="pelvis_position" objtype="body" objname="pelvis" />
+    <framezaxis  name="pelvis_up"       objtype="body" objname="pelvis" />
+    <subtreecom    name="com"     body="pelvis" />
+    <subtreelinvel name="com_vel" body="pelvis" />
+    <!-- left_foot_position / right_foot_position come from g1_23dof.xml -->
+
+    <!-- ===== Visualization trace ===== -->
+    <framepos name="trace0" objtype="body" objname="pelvis" />
   </sensor>
+
+  <include file="../scene.xml"/>
+  <!-- meshdir resolves relative to this (top-level) file's dir, g1/stand/, so   -->
+  <!-- reach the shared meshes in g1/assets/ via ../assets. Declared AFTER the    -->
+  <!-- include so it overrides the meshdir="assets" set inside g1_23dof.xml.      -->
+  <compiler meshdir="../assets"/>
+
+  <keyframe>
+    <!-- qpos: base pos (3) + base quat (4) + 23 joints. -->
+    <!-- joint order: L hip p/r/y, L knee, L ankle p/r, R hip p/r/y, R knee, -->
+    <!--   R ankle p/r, waist yaw, L shoulder p/r/y, L elbow, L wrist roll, -->
+    <!--   R shoulder p/r/y, R elbow, R wrist roll. TODO: set standing pose. -->
+    <key name="home"
+         qpos="0 0 0.793 1 0 0 0
+               0 0 0 0 0 0
+               0 0 0 0 0 0
+               0
+               0 0 0 0 0
+               0 0 0 0 0"/>
+  </keyframe>
 </mujoco>
