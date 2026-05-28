@@ -54,6 +54,8 @@ add_library(
   tasks/fingers/fingers.h
   tasks/g1/stand/stand.cc
   tasks/g1/stand/stand.h
+  tasks/g1/tracking/tracking.cc
+  tasks/g1/tracking/tracking.h
   tasks/humanoid/interact/interact.cc
   tasks/humanoid/interact/interact.h
   tasks/humanoid/interact/contact_keyframe.cc
