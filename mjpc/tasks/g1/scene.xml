@@ -1,6 +1,14 @@
 <mujoco model="g1 scene">
   <include file="g1_23dof_hydrax.xml"/>
 
+  <!-- Override Hydrax-tuned physics with mjpc-friendly settings. The included    -->
+  <!-- file uses timestep=0.02, iterations=1, eulerdamp disabled (tuned for GPU   -->
+  <!-- batched sampling); on a single sim chain that combo is unstable with the  -->
+  <!-- stiff (kp=500) position actuators -> persistent jitter, bad gradients.    -->
+  <option timestep="0.005" iterations="6" integrator="implicitfast">
+    <flag eulerdamp="enable"/>
+  </option>
+
   <statistic center="0.0 0.0 0.5" extent="1.5"/>
 
   <visual>

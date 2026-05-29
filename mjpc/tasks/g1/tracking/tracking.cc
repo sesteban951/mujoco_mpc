@@ -26,15 +26,17 @@ std::tuple<int, int, double, double> ComputeInterpolationValues(double index,
   return {index_0, index_1, weight_0, weight_1};
 }
 
-// TODO: set to match the FPS of the mocap clips loaded below.
-constexpr double kFps = 30.0;
+// Sample rate of every loaded clip. Must match all hz.csv values used when
+// generating the keyframe XMLs via csv_to_keyframe.py (--fps).
+constexpr double kFps = 50.0;
 
 // Per-motion frame counts. The total across all entries must equal the number
 // of <key> elements MuJoCo loads (i.e. the sum of all included keyframe files).
 // Add a new entry whenever you include another keyframe file in task.xml, and
 // update the "task_transition" dropdown there to add a corresponding name.
 constexpr int kMotionLengths[] = {
-    2,  // Placeholder (g1/tracking/keyframes/placeholder_poses.xml)
+    264,  // Jump Up  (g1/tracking/keyframes/srb_ik_jump_23dof_poses.xml)
+    253,  // Jump Fwd (g1/tracking/keyframes/srb_ik_jump_fwd_23dof_poses.xml)
 };
 
 int MotionLength(int id) { return kMotionLengths[id]; }
@@ -48,14 +50,30 @@ int MotionStartIndex(int id) {
 // Tracked-body names. THIS ORDER IS LOAD-BEARING:
 //   1. It must match the declaration order of the mocap[<name>] bodies in
 //      task.xml (which determines body_mocapid and the layout of key_mpos).
-//   2. It must match how the per-body <user> residual sensors are grouped
-//      in task.xml (Pos[knee] dim=6 covers lknee+rknee back-to-back, etc.).
+//   2. It must match the dims of the BodyPos/BodyOri/BodyLinVel/BodyAngVel
+//      <user> residual sensors in task.xml (each is dim = 14 * 3 = 42).
 const std::array<std::string, 14> body_names = {
     "pelvis",    "torso",     "lknee",  "rknee",
     "lhand",     "rhand",     "lelbow", "relbow",
     "lshoulder", "rshoulder", "lhip",   "rhip",
     "lfoot",     "rfoot",
 };
+
+// Anchor body for the BeyondMimic relative formulation: per-body pose is
+// tracked in a frame attached to this body, yaw-aligned to the reference.
+// Must be one of body_names. (whole_body_tracking / unitree_rl_mjlab use
+// "torso_link"; here that maps to the "torso" entry.)
+constexpr const char* kAnchorBody = "torso";
+
+// Quaternion (w,x,y,z) keeping only the yaw (rotation about world z).
+void YawQuat(double res[4], const double q[4]) {
+  double yaw = std::atan2(2.0 * (q[0] * q[3] + q[1] * q[2]),
+                          1.0 - 2.0 * (q[2] * q[2] + q[3] * q[3]));
+  res[0] = std::cos(0.5 * yaw);
+  res[1] = 0.0;
+  res[2] = 0.0;
+  res[3] = std::sin(0.5 * yaw);
+}
 
 }  // namespace
 
@@ -67,15 +85,17 @@ std::string Tracking::XmlPath() const {
 std::string Tracking::Name() const { return "G1 Track"; }
 
 // ----------------- Residuals for G1 tracking task -----------------
-//   Number of residuals:
-//     Residual (0): joint velocity (nv - 6)
-//     Residual (1): control (nu)
-//     Residual (2): Pos[avg]   - mean(robot_sites) - mean(mocap_markers)
-//     Residual (3..16): per-body position (each 3D), robot relative to
-//                       its mean, minus mocap relative to its mean.
-//     Residual (17..30): per-body linear velocity (each 3D), mocap
-//                        finite-difference minus robot framelinvel.
-//   Number of parameters: 0
+// BeyondMimic-style motion tracking (whole_body_tracking / unitree_rl_mjlab).
+// All terms are normed with the Gaussian loss kGaussianLoss (1 - exp(-x^2/p^2))
+// so each maps to the exp(-err^2/std^2) tracking reward.
+//   Residual (0): AnchorPos   (3)  torso global position error
+//   Residual (1): AnchorOri   (3)  torso global orientation error
+//   Residual (2): BodyPos     (42) 14 bodies, position in the yaw-aligned
+//                                  anchor frame (relative pose-shape)
+//   Residual (3): BodyOri     (42) 14 bodies, orientation in the anchor frame
+//   Residual (4): BodyLinVel  (42) 14 bodies, GLOBAL linear velocity error
+//   Residual (5): BodyAngVel  (42) 14 bodies, GLOBAL angular velocity error
+//   Number of parameters: 0   (per-term std lives in the <user> norm params)
 // -----------------------------------------------------------------
 void Tracking::ResidualFn::Residual(const mjModel* model, const mjData* data,
                                     double* residual) const {
@@ -90,103 +110,122 @@ void Tracking::ResidualFn::Residual(const mjModel* model, const mjData* data,
   std::tie(key_index_0, key_index_1, weight_0, weight_1) =
       ComputeInterpolationValues(current_index, last_key_index);
 
+  // ----- per-body lookups against the interpolated reference clip ----- //
+  auto mocapid = [&](const std::string& body_name) {
+    int id = mj_name2id(model, mjOBJ_BODY, ("mocap[" + body_name + "]").c_str());
+    assert(0 <= id);
+    int mid = model->body_mocapid[id];
+    assert(0 <= mid);
+    return mid;
+  };
+  // Interpolated reference position of a mocap body (world frame).
+  auto ref_pos = [&](int mid, double out[3]) {
+    mju_scl3(out, model->key_mpos + model->nmocap * 3 * key_index_0 + 3 * mid,
+             weight_0);
+    mju_addToScl3(out,
+                  model->key_mpos + model->nmocap * 3 * key_index_1 + 3 * mid,
+                  weight_1);
+  };
+  // Interpolated reference orientation of a mocap body (world frame).
+  auto ref_quat = [&](int mid, double out[4]) {
+    mju_scl(out, model->key_mquat + model->nmocap * 4 * key_index_0 + 4 * mid,
+            weight_0, 4);
+    mju_addToScl(out, model->key_mquat + model->nmocap * 4 * key_index_1 + 4 * mid,
+                 weight_1, 4);
+    mju_normalize4(out);
+  };
+  auto robot_pos = [&](const std::string& body_name) {
+    return SensorByName(model, data, ("tracking_pos[" + body_name + "]").c_str());
+  };
+  auto robot_quat = [&](const std::string& body_name) {
+    return SensorByName(model, data,
+                        ("tracking_quat[" + body_name + "]").c_str());
+  };
+
+  // ----- anchor (torso) world pose, reference + robot ----- //
+  int anchor_mid = mocapid(kAnchorBody);
+  double ref_anchor_pos[3], ref_anchor_quat[4];
+  ref_pos(anchor_mid, ref_anchor_pos);
+  ref_quat(anchor_mid, ref_anchor_quat);
+  double* robot_anchor_pos = robot_pos(kAnchorBody);
+  double* robot_anchor_quat = robot_quat(kAnchorBody);
+
+  // delta orientation: yaw-only misalignment between robot and reference anchor
+  //   delta_ori = yaw( robot_anchor_quat * inv(ref_anchor_quat) )
+  double inv_ref_anchor_quat[4], tmp_quat[4], delta_ori[4];
+  mju_negQuat(inv_ref_anchor_quat, ref_anchor_quat);
+  mju_mulQuat(tmp_quat, robot_anchor_quat, inv_ref_anchor_quat);
+  YawQuat(delta_ori, tmp_quat);
+
+  // delta position: robot anchor xy, reference anchor z (height comes from clip)
+  double delta_pos[3] = {robot_anchor_pos[0], robot_anchor_pos[1],
+                         ref_anchor_pos[2]};
+
   int counter = 0;
 
-  // ----- joint velocity (skip floating-base 6 DoFs) ----- //
-  mju_copy(residual + counter, data->qvel + 6, model->nv - 6);
-  counter += model->nv - 6;
-
-  // ----- control ----- //
-  mju_copy(&residual[counter], data->ctrl, model->nu);
-  counter += model->nu;
-
-  // ----- per-body mocap position (linearly interpolated) ----- //
-  auto get_body_mpos = [&](const std::string& body_name, double result[3]) {
-    std::string mocap_body_name = "mocap[" + body_name + "]";
-    int mocap_body_id = mj_name2id(model, mjOBJ_BODY, mocap_body_name.c_str());
-    assert(0 <= mocap_body_id);
-    int body_mocapid = model->body_mocapid[mocap_body_id];
-    assert(0 <= body_mocapid);
-
-    mju_scl3(
-        result,
-        model->key_mpos + model->nmocap * 3 * key_index_0 + 3 * body_mocapid,
-        weight_0);
-    mju_addToScl3(
-        result,
-        model->key_mpos + model->nmocap * 3 * key_index_1 + 3 * body_mocapid,
-        weight_1);
-  };
-
-  // ----- per-body robot position (from framepos sensor on the body) ----- //
-  auto get_body_sensor_pos = [&](const std::string& body_name,
-                                 double result[3]) {
-    std::string pos_sensor_name = "tracking_pos[" + body_name + "]";
-    double* sensor_pos = SensorByName(model, data, pos_sensor_name.c_str());
-    mju_copy3(result, sensor_pos);
-  };
-
-  // Compute centroid of mocap markers and centroid of robot tracking sites.
-  // We track the average first, then per-body deviations from it. This lets
-  // the user weight global translation tracking independently from per-limb
-  // tracking (Pos[avg] vs Pos[*] in the user sensors).
-  double avg_mpos[3] = {0};
-  double avg_sensor_pos[3] = {0};
-  int num_body = 0;
-  for (const auto& body_name : body_names) {
-    double body_mpos[3];
-    double body_sensor_pos[3];
-    get_body_mpos(body_name, body_mpos);
-    mju_addTo3(avg_mpos, body_mpos);
-    get_body_sensor_pos(body_name, body_sensor_pos);
-    mju_addTo3(avg_sensor_pos, body_sensor_pos);
-    num_body++;
-  }
-  mju_scl3(avg_mpos, avg_mpos, 1.0 / num_body);
-  mju_scl3(avg_sensor_pos, avg_sensor_pos, 1.0 / num_body);
-
-  // residual: average position (3 dims)
-  mju_sub3(&residual[counter], avg_mpos, avg_sensor_pos);
+  // ----- (0) AnchorPos: torso global position error ----- //
+  mju_sub3(&residual[counter], robot_anchor_pos, ref_anchor_pos);
   counter += 3;
 
-  // residuals: per-body position relative to the centroid (3 dims each)
+  // ----- (1) AnchorOri: torso global orientation error ----- //
+  mju_subQuat(&residual[counter], robot_anchor_quat, ref_anchor_quat);
+  counter += 3;
+
+  // ----- (2) BodyPos: per-body position in the yaw-aligned anchor frame ----- //
+  // target_pos = delta_pos + delta_ori * (ref_body_pos - ref_anchor_pos)
   for (const auto& body_name : body_names) {
-    double body_mpos[3];
-    get_body_mpos(body_name, body_mpos);
-    double body_sensor_pos[3];
-    get_body_sensor_pos(body_name, body_sensor_pos);
-
-    mju_subFrom3(body_mpos, avg_mpos);
-    mju_subFrom3(body_sensor_pos, avg_sensor_pos);
-
-    mju_sub3(&residual[counter], body_mpos, body_sensor_pos);
+    double rbp[3];
+    ref_pos(mocapid(body_name), rbp);
+    mju_subFrom3(rbp, ref_anchor_pos);           // ref body relative to anchor
+    double target[3];
+    mju_rotVecQuat(target, rbp, delta_ori);      // into robot's yaw frame
+    mju_addTo3(target, delta_pos);               // re-anchor at robot xy / ref z
+    mju_sub3(&residual[counter], robot_pos(body_name), target);
     counter += 3;
   }
 
-  // ----- per-body linear velocity tracking ----- //
-  // Reference velocity is computed by finite-differencing the mocap marker
-  // between the two surrounding frames (so it's noisier but contains no qpos
-  // information). Compared against the body's framelinvel sensor.
+  // ----- (3) BodyOri: per-body orientation in the anchor frame ----- //
+  // target_quat = delta_ori * ref_body_quat
   for (const auto& body_name : body_names) {
-    std::string mocap_body_name = "mocap[" + body_name + "]";
-    std::string linvel_sensor_name = "tracking_linvel[" + body_name + "]";
-    int mocap_body_id = mj_name2id(model, mjOBJ_BODY, mocap_body_name.c_str());
-    assert(0 <= mocap_body_id);
-    int body_mocapid = model->body_mocapid[mocap_body_id];
-    assert(0 <= body_mocapid);
+    double rbq[4], target_quat[4];
+    ref_quat(mocapid(body_name), rbq);
+    mju_mulQuat(target_quat, delta_ori, rbq);
+    mju_subQuat(&residual[counter], robot_quat(body_name), target_quat);
+    counter += 3;
+  }
 
-    mju_copy3(
-        &residual[counter],
-        model->key_mpos + model->nmocap * 3 * key_index_1 + 3 * body_mocapid);
-    mju_subFrom3(
-        &residual[counter],
-        model->key_mpos + model->nmocap * 3 * key_index_0 + 3 * body_mocapid);
+  // ----- (4) BodyLinVel: per-body GLOBAL linear velocity error ----- //
+  // Reference velocity = finite-difference of mocap position between frames.
+  for (const auto& body_name : body_names) {
+    int mid = mocapid(body_name);
+    mju_copy3(&residual[counter],
+              model->key_mpos + model->nmocap * 3 * key_index_1 + 3 * mid);
+    mju_subFrom3(&residual[counter],
+                 model->key_mpos + model->nmocap * 3 * key_index_0 + 3 * mid);
     mju_scl3(&residual[counter], &residual[counter], kFps);
-
     double* sensor_linvel =
-        SensorByName(model, data, linvel_sensor_name.c_str());
+        SensorByName(model, data, ("tracking_linvel[" + body_name + "]").c_str());
     mju_subFrom3(&residual[counter], sensor_linvel);
+    counter += 3;
+  }
 
+  // ----- (5) BodyAngVel: per-body GLOBAL angular velocity error ----- //
+  // Reference angvel from finite-differenced mocap quats (q0 body frame),
+  // rotated into the world frame to match the frameangvel sensor.
+  for (const auto& body_name : body_names) {
+    int mid = mocapid(body_name);
+    const mjtNum* q0 =
+        model->key_mquat + model->nmocap * 4 * key_index_0 + 4 * mid;
+    const mjtNum* q1 =
+        model->key_mquat + model->nmocap * 4 * key_index_1 + 4 * mid;
+    double dvel[3];
+    mju_subQuat(dvel, q1, q0);
+    mju_scl3(dvel, dvel, kFps);
+    double ref_angvel[3];
+    mju_rotVecQuat(ref_angvel, dvel, q0);
+    double* sensor_angvel =
+        SensorByName(model, data, ("tracking_angvel[" + body_name + "]").c_str());
+    mju_sub3(&residual[counter], ref_angvel, sensor_angvel);
     counter += 3;
   }
 
@@ -233,6 +272,20 @@ void Tracking::TransitionLocked(mjModel* model, mjData* d) {
 
   mju_copy(d->mocap_pos, mocap_pos_0, model->nmocap * 3);
   mju_addTo(d->mocap_pos, mocap_pos_1, model->nmocap * 3);
+
+  // Same blend for orientation; LERP + renormalize per mocap body. Adjacent
+  // frames at kFps are close enough that this matches slerp to high accuracy.
+  mjtNum* mocap_quat_0 = mj_stackAllocNum(d, 4 * model->nmocap);
+  mjtNum* mocap_quat_1 = mj_stackAllocNum(d, 4 * model->nmocap);
+  mju_scl(mocap_quat_0, model->key_mquat + model->nmocap * 4 * key_index_0,
+          weight_0, model->nmocap * 4);
+  mju_scl(mocap_quat_1, model->key_mquat + model->nmocap * 4 * key_index_1,
+          weight_1, model->nmocap * 4);
+  mju_copy(d->mocap_quat, mocap_quat_0, model->nmocap * 4);
+  mju_addTo(d->mocap_quat, mocap_quat_1, model->nmocap * 4);
+  for (int i = 0; i < model->nmocap; i++) {
+    mju_normalize4(d->mocap_quat + 4 * i);
+  }
 
   mj_freeStack(d);
 }

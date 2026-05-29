@@ -42,6 +42,8 @@ int NormParameterDimension(int type) {
       return 2;
     case NormType::kRectifyLoss:
       return 1;
+    case NormType::kGaussianLoss:
+      return 1;
   }
   return 0;
 }
@@ -198,6 +200,32 @@ double Norm(double* g, double* H, const double* x, const double* params, int n,
           y += x[i] > 0 ? x[i] : 0;
           if (g) g[i] = x[i] > 0 ? 1 : 0;
           if (H) H[i * n + i] = 0;
+        }
+      }
+      break;
+    }
+
+    case NormType::kGaussianLoss: {  // y = 1 - exp(-||x||^2 / p^2)
+      double c = 0;
+      for (int i = 0; i < n; i++) {
+        c += x[i] * x[i];
+      }
+      double inv_p2 = (p > 0) ? 1.0 / (p * p) : 0.0;
+      double f = mju_exp(-c * inv_p2);  // f = exp(-||x||^2 / p^2)
+      y = 1.0 - f;
+      if (g) {  // dy/dx_i = 2 f x_i / p^2
+        double s = 2.0 * f * inv_p2;
+        for (int i = 0; i < n; i++) {
+          g[i] = s * x[i];
+        }
+      }
+      if (H) {  // PSD (Gauss-Newton) approximation: H = (2 f / p^2) I.
+        // The exact Hessian (2f/p^2)(I - 2 x x^T / p^2) is indefinite away from
+        // the target, which destabilizes iLQG/DDP backward passes. Dropping the
+        // negative outer-product term keeps it positive-definite (f, p^2 > 0).
+        double s = 2.0 * f * inv_p2;
+        for (int i = 0; i < n; i++) {
+          H[i * n + i] = s;
         }
       }
       break;

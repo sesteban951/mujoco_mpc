@@ -32,6 +32,10 @@ enum NormType : int {
   kSmoothAbsLoss = 6,
   kSmoothAbs2Loss = 7,
   kRectifyLoss = 8,
+  // Gaussian / RBF loss: y = 1 - exp(-||x||^2 / p^2). Bounded in [0, 1),
+  // minimized at x = 0. The cost-equivalent of the exp(-err^2/std^2) tracking
+  // reward used by DeepMimic/BeyondMimic-style motion-tracking objectives.
+  kGaussianLoss = 9,
 };
 
 // norm's number of parameters

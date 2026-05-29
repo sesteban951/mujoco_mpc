@@ -3,7 +3,7 @@
 
   <custom>
     <!-- One entry per loaded mocap clip; order must match kMotionLengths[] in tracking.cc. -->
-    <text name="task_transition" data="Placeholder" />
+    <text name="task_transition" data="Jump Up|Jump Fwd" />
 
     <numeric name="agent_planner" data="0" />
     <numeric name="agent_horizon" data="0.5" />
@@ -20,29 +20,23 @@
   <!-- own IMU sensors that would otherwise precede).               -->
   <!-- ============================================================ -->
   <sensor>
-    <!-- ===== Residual cost terms (order + dims must match Residual()) ===== -->
-    <!--   norm/weight format: "<NormType> <weight> <w_lower> <w_upper> [params]" -->
-    <user name="Joint Vel."    dim="23" user="0 0.001 0.0 0.01" />
-    <user name="Ctrl"          dim="23" user="0 0.1   0.0 1.0" />
-
-    <user name="Pos[avg]"      dim="3"  user="6 100.0 0.0 100.0 0.1" />
-    <user name="Pos[pelvis]"   dim="3"  user="6 30.0  0.0 100.0 0.1" />
-    <user name="Pos[torso]"    dim="3"  user="6 0.0   0.0 100.0 0.1" />
-    <user name="Pos[knee]"     dim="6"  user="6 30.0  0.0 100.0 0.1" />
-    <user name="Pos[hand]"     dim="6"  user="6 30.0  0.0 100.0 0.1" />
-    <user name="Pos[elbow]"    dim="6"  user="6 30.0  0.0 100.0 0.1" />
-    <user name="Pos[shoulder]" dim="6"  user="6 30.0  0.0 100.0 0.1" />
-    <user name="Pos[hip]"      dim="6"  user="6 30.0  0.0 100.0 0.1" />
-    <user name="Pos[foot]"     dim="6"  user="6 30.0  0.0 100.0 0.1" />
-
-    <user name="Vel[root]"     dim="3"  user="6 0.1   0.0 1.0 0.3" />
-    <user name="Vel[torso]"    dim="3"  user="6 0.0   0.0 1.0 0.3" />
-    <user name="Vel[knee]"     dim="6"  user="6 0.1   0.0 1.0 0.3" />
-    <user name="Vel[hand]"     dim="6"  user="6 0.1   0.0 1.0 0.3" />
-    <user name="Vel[elbow]"    dim="6"  user="6 0.1   0.0 1.0 0.3" />
-    <user name="Vel[shoulder]" dim="6"  user="6 0.1   0.0 1.0 0.3" />
-    <user name="Vel[hip]"      dim="6"  user="6 0.1   0.0 1.0 0.3" />
-    <user name="Vel[foot]"     dim="6"  user="6 0.1   0.0 1.0 0.3" />
+    <!-- ===== BeyondMimic tracking cost terms (order + dims must match Residual()) =====
+         All terms use the Gaussian norm kGaussianLoss=9: cost = 1 - exp(-||r||^2/p^2),
+         the cost-equivalent of the exp(-err^2/std^2) reward in whole_body_tracking /
+         unitree_rl_mjlab. Format: "<NormType> <weight> <w_lower> <w_upper> <p>".
+         For the 14-body terms the reward averages squared error over bodies, i.e.
+         exp(-(sum r^2 / 14)/std^2); folding the 1/14 into the norm gives p = std*sqrt(14):
+           BodyPos    std=0.3  -> p=0.3*sqrt(14)=1.1225
+           BodyOri    std=0.4  -> p=0.4*sqrt(14)=1.4967
+           BodyLinVel std=1.0  -> p=1.0*sqrt(14)=3.7417
+           BodyAngVel std=pi   -> p=pi *sqrt(14)=11.7551
+         Anchor terms are single-body, so p = std directly. -->
+    <user name="AnchorPos"  dim="3"  user="9 0.5 0.0 10.0 0.3" />
+    <user name="AnchorOri"  dim="3"  user="9 0.5 0.0 10.0 0.4" />
+    <user name="BodyPos"    dim="42" user="9 1.0 0.0 10.0 1.1225" />
+    <user name="BodyOri"    dim="42" user="9 1.0 0.0 10.0 1.4967" />
+    <user name="BodyLinVel" dim="42" user="9 1.0 0.0 10.0 3.7417" />
+    <user name="BodyAngVel" dim="42" user="9 1.0 0.0 10.0 11.7551" />
 
     <!-- ===== Robot per-body world position / linear velocity ===== -->
     <!-- objtype="body" reads the body's frame origin. To attach a tracking    -->
@@ -79,6 +73,39 @@
     <framelinvel name="tracking_linvel[lfoot]"     objtype="body" objname="left_ankle_roll_link" />
     <framelinvel name="tracking_linvel[rfoot]"     objtype="body" objname="right_ankle_roll_link" />
 
+    <!-- ===== Robot per-body world orientation (matched against mocap_quat) ===== -->
+    <framequat name="tracking_quat[pelvis]"    objtype="body" objname="pelvis" />
+    <framequat name="tracking_quat[torso]"     objtype="body" objname="torso_link" />
+    <framequat name="tracking_quat[lknee]"     objtype="body" objname="left_knee_link" />
+    <framequat name="tracking_quat[rknee]"     objtype="body" objname="right_knee_link" />
+    <framequat name="tracking_quat[lhand]"     objtype="body" objname="left_wrist_yaw_link" />
+    <framequat name="tracking_quat[rhand]"     objtype="body" objname="right_wrist_yaw_link" />
+    <framequat name="tracking_quat[lelbow]"    objtype="body" objname="left_elbow_link" />
+    <framequat name="tracking_quat[relbow]"    objtype="body" objname="right_elbow_link" />
+    <framequat name="tracking_quat[lshoulder]" objtype="body" objname="left_shoulder_pitch_link" />
+    <framequat name="tracking_quat[rshoulder]" objtype="body" objname="right_shoulder_pitch_link" />
+    <framequat name="tracking_quat[lhip]"      objtype="body" objname="left_hip_pitch_link" />
+    <framequat name="tracking_quat[rhip]"      objtype="body" objname="right_hip_pitch_link" />
+    <framequat name="tracking_quat[lfoot]"     objtype="body" objname="left_ankle_roll_link" />
+    <framequat name="tracking_quat[rfoot]"     objtype="body" objname="right_ankle_roll_link" />
+
+    <!-- ===== Robot per-body world angular velocity (matched against -->
+    <!-- finite-differenced mocap_quat) ===== -->
+    <frameangvel name="tracking_angvel[pelvis]"    objtype="body" objname="pelvis" />
+    <frameangvel name="tracking_angvel[torso]"     objtype="body" objname="torso_link" />
+    <frameangvel name="tracking_angvel[lknee]"     objtype="body" objname="left_knee_link" />
+    <frameangvel name="tracking_angvel[rknee]"     objtype="body" objname="right_knee_link" />
+    <frameangvel name="tracking_angvel[lhand]"     objtype="body" objname="left_wrist_yaw_link" />
+    <frameangvel name="tracking_angvel[rhand]"     objtype="body" objname="right_wrist_yaw_link" />
+    <frameangvel name="tracking_angvel[lelbow]"    objtype="body" objname="left_elbow_link" />
+    <frameangvel name="tracking_angvel[relbow]"    objtype="body" objname="right_elbow_link" />
+    <frameangvel name="tracking_angvel[lshoulder]" objtype="body" objname="left_shoulder_pitch_link" />
+    <frameangvel name="tracking_angvel[rshoulder]" objtype="body" objname="right_shoulder_pitch_link" />
+    <frameangvel name="tracking_angvel[lhip]"      objtype="body" objname="left_hip_pitch_link" />
+    <frameangvel name="tracking_angvel[rhip]"      objtype="body" objname="right_hip_pitch_link" />
+    <frameangvel name="tracking_angvel[lfoot]"     objtype="body" objname="left_ankle_roll_link" />
+    <frameangvel name="tracking_angvel[rfoot]"     objtype="body" objname="right_ankle_roll_link" />
+
     <framepos name="trace0" objtype="body" objname="pelvis" />
   </sensor>
 
@@ -87,29 +114,88 @@
 
   <default>
     <default class="mocap_site">
-      <site type="sphere" size="0.03" rgba="0 0 1 1" group="3"/>
+      <!-- group=2 (default-visible) rather than 3 (toggle-required) so the    -->
+      <!-- 14 blue ghost markers show up without flipping the rendering panel. -->
+      <site type="sphere" size="0.015" rgba="0 0 1 1" group="2"/>
+    </default>
+    <!-- XYZ tripod sites attached to each mocap body. Because the body has    -->
+    <!-- mocap="true", its orientation is set every step from d->mocap_quat    -->
+    <!-- (interpolated key_mquat in TransitionLocked), so these axes rotate    -->
+    <!-- with the reference orientation. Red=X, Green=Y, Blue=Z.               -->
+    <default class="mocap_axis_x">
+      <site type="cylinder" fromto="0 0 0 0.06 0 0" size="0.005" rgba="1 0 0 1" group="2"/>
+    </default>
+    <default class="mocap_axis_y">
+      <site type="cylinder" fromto="0 0 0 0 0.06 0" size="0.005" rgba="0 1 0 1" group="2"/>
+    </default>
+    <default class="mocap_axis_z">
+      <site type="cylinder" fromto="0 0 0 0 0 0.06" size="0.005" rgba="0 0 1 1" group="2"/>
     </default>
   </default>
 
-  <!-- Ghost mocap markers. Their positions are overwritten every step by      -->
-  <!-- TransitionLocked. THE DECLARATION ORDER HERE DEFINES body_mocapid AND   -->
-  <!-- THE LAYOUT OF key_mpos; it must match body_names[] in tracking.cc.      -->
+  <!-- Ghost mocap markers + per-body XYZ tripods. Their positions/orientations  -->
+  <!-- are overwritten every step by TransitionLocked (mocap_pos / mocap_quat).  -->
+  <!-- THE DECLARATION ORDER HERE DEFINES body_mocapid AND THE LAYOUT OF         -->
+  <!-- key_mpos/key_mquat; it must match body_names[] in tracking.cc.            -->
   <worldbody>
-    <body name="mocap[pelvis]"    mocap="true"><site name="mocap[pelvis]"    class="mocap_site" size="0.05"/></body>
-    <body name="mocap[torso]"     mocap="true"><site name="mocap[torso]"     class="mocap_site"/></body>
-    <body name="mocap[lknee]"     mocap="true"><site name="mocap[lknee]"     class="mocap_site"/></body>
-    <body name="mocap[rknee]"     mocap="true"><site name="mocap[rknee]"     class="mocap_site"/></body>
-    <body name="mocap[lhand]"     mocap="true"><site name="mocap[lhand]"     class="mocap_site"/></body>
-    <body name="mocap[rhand]"     mocap="true"><site name="mocap[rhand]"     class="mocap_site"/></body>
-    <body name="mocap[lelbow]"    mocap="true"><site name="mocap[lelbow]"    class="mocap_site"/></body>
-    <body name="mocap[relbow]"    mocap="true"><site name="mocap[relbow]"    class="mocap_site"/></body>
-    <body name="mocap[lshoulder]" mocap="true"><site name="mocap[lshoulder]" class="mocap_site"/></body>
-    <body name="mocap[rshoulder]" mocap="true"><site name="mocap[rshoulder]" class="mocap_site"/></body>
-    <body name="mocap[lhip]"      mocap="true"><site name="mocap[lhip]"      class="mocap_site"/></body>
-    <body name="mocap[rhip]"      mocap="true"><site name="mocap[rhip]"      class="mocap_site"/></body>
-    <body name="mocap[lfoot]"     mocap="true"><site name="mocap[lfoot]"     class="mocap_site"/></body>
-    <body name="mocap[rfoot]"     mocap="true"><site name="mocap[rfoot]"     class="mocap_site"/></body>
+    <body name="mocap[pelvis]"    mocap="true">
+      <site name="mocap[pelvis]" class="mocap_site" size="0.025"/>
+      <site class="mocap_axis_x"/><site class="mocap_axis_y"/><site class="mocap_axis_z"/>
+    </body>
+    <body name="mocap[torso]"     mocap="true">
+      <site name="mocap[torso]" class="mocap_site"/>
+      <site class="mocap_axis_x"/><site class="mocap_axis_y"/><site class="mocap_axis_z"/>
+    </body>
+    <body name="mocap[lknee]"     mocap="true">
+      <site name="mocap[lknee]" class="mocap_site"/>
+      <site class="mocap_axis_x"/><site class="mocap_axis_y"/><site class="mocap_axis_z"/>
+    </body>
+    <body name="mocap[rknee]"     mocap="true">
+      <site name="mocap[rknee]" class="mocap_site"/>
+      <site class="mocap_axis_x"/><site class="mocap_axis_y"/><site class="mocap_axis_z"/>
+    </body>
+    <body name="mocap[lhand]"     mocap="true">
+      <site name="mocap[lhand]" class="mocap_site"/>
+      <site class="mocap_axis_x"/><site class="mocap_axis_y"/><site class="mocap_axis_z"/>
+    </body>
+    <body name="mocap[rhand]"     mocap="true">
+      <site name="mocap[rhand]" class="mocap_site"/>
+      <site class="mocap_axis_x"/><site class="mocap_axis_y"/><site class="mocap_axis_z"/>
+    </body>
+    <body name="mocap[lelbow]"    mocap="true">
+      <site name="mocap[lelbow]" class="mocap_site"/>
+      <site class="mocap_axis_x"/><site class="mocap_axis_y"/><site class="mocap_axis_z"/>
+    </body>
+    <body name="mocap[relbow]"    mocap="true">
+      <site name="mocap[relbow]" class="mocap_site"/>
+      <site class="mocap_axis_x"/><site class="mocap_axis_y"/><site class="mocap_axis_z"/>
+    </body>
+    <body name="mocap[lshoulder]" mocap="true">
+      <site name="mocap[lshoulder]" class="mocap_site"/>
+      <site class="mocap_axis_x"/><site class="mocap_axis_y"/><site class="mocap_axis_z"/>
+    </body>
+    <body name="mocap[rshoulder]" mocap="true">
+      <site name="mocap[rshoulder]" class="mocap_site"/>
+      <site class="mocap_axis_x"/><site class="mocap_axis_y"/><site class="mocap_axis_z"/>
+    </body>
+    <body name="mocap[lhip]"      mocap="true">
+      <site name="mocap[lhip]" class="mocap_site"/>
+      <site class="mocap_axis_x"/><site class="mocap_axis_y"/><site class="mocap_axis_z"/>
+    </body>
+    <body name="mocap[rhip]"      mocap="true">
+      <site name="mocap[rhip]" class="mocap_site"/>
+      <site class="mocap_axis_x"/><site class="mocap_axis_y"/><site class="mocap_axis_z"/>
+    </body>
+    <body name="mocap[lfoot]"     mocap="true">
+      <site name="mocap[lfoot]" class="mocap_site"/>
+      <site class="mocap_axis_x"/><site class="mocap_axis_y"/><site class="mocap_axis_z"/>
+    </body>
+    <body name="mocap[rfoot]"     mocap="true">
+      <site name="mocap[rfoot]" class="mocap_site"/>
+      <site class="mocap_axis_x"/><site class="mocap_axis_y"/><site class="mocap_axis_z"/>
+    </body>
   </worldbody>
 
-  <include file="./keyframes/placeholder_poses.xml"/>
+  <include file="./keyframes/srb_ik_jump_23dof_poses.xml"/>
+  <include file="./keyframes/srb_ik_jump_fwd_23dof_poses.xml"/>
 </mujoco>
